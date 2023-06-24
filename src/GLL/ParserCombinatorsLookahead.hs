@@ -1,5 +1,5 @@
 
-module GLL.ParserCombinators (
+module GLL.ParserCombinatorsLookahead (
     module GLL.Combinators.Interface 
     ) where
 

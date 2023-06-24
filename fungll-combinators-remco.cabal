@@ -3,7 +3,7 @@ cabal-version:       3.0
 -- documentation, see http://haskell.org/cabal/users-guide/
 
 -- The name of the package.
-name:                fungll-combinators
+name:                fungll-combinators-remco
 version:             0.4.1.1 
 synopsis:            GLL parser with simple combinator interface 
 license:             BSD-3-Clause
@@ -37,7 +37,7 @@ library
                         , regex-applicative >= 0.3
                         , time >= 1.8
                         , gll >= 0.4.1.1
-    exposed-modules :     GLL.ParserCombinators
+    exposed-modules :     GLL.ParserCombinatorsLookahead
                         , GLL.Types.BSR
                         , GLL.Types.DataSets
                         , GLL.Types.Input
