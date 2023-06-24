@@ -1,0 +1,306 @@
+imports{
+import GLL.Machines.RGLL (gllSPPF,ParseResult(..))
+import GLL.Types.Abstract
+import GLL.Types.Derivations
+import GLL.Common
+
+import              Prelude         hiding ((<*>), (<*), (<$>), (<$))
+
+import qualified    Data.Array      as A
+import qualified    Data.Map        as M
+import qualified    Data.IntMap     as IM
+import qualified    Data.Set        as S
+}
+
+-- there are two types of parsers
+-- 1) alternatives, constructed by apply
+--                  or by a sequence of alt-parsers applied to symbol-parsers
+type AltPs a = [AltP a]
+data AltP a     | Apply     f :: {(b -> a)}             r :: (SymbolP b)
+                | Seq       l :: (AltP {(b -> a)})      r :: (SymbolP b)
+                | Satisfy   a :: {@a}
+                
+-- 2) and symbols. Non-terminals are made by applying Root to alternatives
+--                 Terminals are made by Terminal or Satisfy (epsilon)
+data SymbolP a  | Root      x :: String              alts :: (AltPs a)
+                | Terminal  t :: Token                  f :: {(Token -> @a)}
+
+---- Goal of Phase1 is constructing the context-free grammar (CFG)
+-- 1) Which symbol do the symbol-parsers add to the CFG?
+attr SymbolP
+    syn symb :: Symbol
+attr AltP -- symb at alternative represents all collected symbols
+    syn symb :: {[Symbol]}
+
+sem SymbolP | Root      loc.symb = Nt @x
+            | Terminal  loc.symb = Term @t
+sem AltP    | Apply     loc.symb = [@r.symb]
+            | Seq       loc.symb = @l.symb ++ [@r.symb]
+            | Satisfy   loc.symb = [Term Epsilon]
+
+-- 2) Construct the grammar
+attr AltPs AltP
+    inh par                  :: Nt
+attr AltPs
+    syn alts use {(:)} {[]}  :: {[Alt]}
+attr AltP
+    syn alts                 :: {Alt}
+
+sem SymbolP | Root          alts.par = @x
+sem AltP    | *             lhs.alts = Alt @lhs.par @loc.symb
+
+attr SymbolP AltP AltPs
+    chn rules :: {RulesMap}
+{
+type RulesMap = M.Map Nt [Alt] 
+}
+sem SymbolP | Root  alts.rules = M.insert @x @alts.alts @lhs.rules
+                    lhs.rules  = if @x `M.member` @lhs.rules
+                                    then @lhs.rules -- dont recurse
+                                    else @alts.rules
+
+-- 3) Apply semantic actions
+-- tell every symbol in a rhs, the alt to which it belongs
+attr AltP
+    inh j       :: Int -- position in the alt
+    inh myalt   :: Alt
+sem AltPs | Cons    hd.j        = (\(Alt _ rhs) -> length rhs) @hd.alts
+                    hd.myalt    = @hd.alts 
+sem AltP  | Seq     l.j         = @lhs.j - 1
+
+attr SymbolP AltP AltPs
+    inh l       :: Int
+    inh r       :: Int
+    inh m       :: Int
+    inh sppf    :: SPPF
+    syn res     :: {[@a]}
+
+sem AltP  | *       loc.param = ((@lhs.myalt,@lhs.j),@lhs.l,@lhs.r)
+                    loc.ks    = maybe [] id (@lhs.sppf `pNodeLookup` @param)
+
+sem AltPs | Cons    lhs.res = @hd.res ++ @tl.res
+          | Nil     lhs.res = []
+sem AltP  | Satisfy lhs.res = {if null @ks then [] else [@a]}
+          | Apply   lhs.res = {if null @ks then [] else map @f @r.res}
+
+    -- TODO if statement is only necessary to parse (char 'a')
+sem SymbolP | Terminal  lhs.res = if @lhs.verified || (@lhs.l + 1 == @lhs.r 
+                                     && @lhs.input A.! @lhs.l == @t)
+                                     then [@f @t] else []
+            | Root      loc.res = @alts.res
+
+type Inputs a b =  [Int]
+attr Inputs
+    inh pl      :: {T_AltP (@b -> @a)}
+    inh pr      :: {T_SymbolP @b}
+    syn res     :: {[@a]}
+    inh l       :: Int
+    inh r       :: Int
+    inh m       :: Int
+    inh sppf    :: SPPF
+    inh j       :: Int
+    inh par     :: Nt
+    inh myalt   :: Alt
+sem Inputs | Nil    lhs.res   = []
+           | Cons   inst.l :: (T_AltP {(b -> a)})
+                    inst.l  = @lhs.pl
+                    l.l     = @lhs.l -- copy
+                    l.r     = @hd    -- param
+                    l.j     = @lhs.j - 1 -- same as SEM SymbolP | Seq  l.j
+                    l.par   = undefined -- copy, will not be used (1st phase)
+                    l.myalt = @lhs.myalt --copy
+                    l.rules = undefined -- will not be used (1st phase)
+
+                    inst.r :: (T_SymbolP b)
+                    inst.r  = @lhs.pr 
+                    r.l     = @hd   -- param
+                    r.r     = @lhs.r -- copy
+
+                    lhs.res   = [ b2a b | b2a <- @l.res, b <- @r.res ] ++ @tl.res
+
+sem AltP  | Seq     inst.inps :: (T_Inputs a b)
+                    inst.inps = foldr sem_Inputs_Cons sem_Inputs_Nil @ks
+                    inps.pl   = T_AltP @l
+                    inps.pr   = T_SymbolP @r
+                    lhs.res   = @inps.res 
+
+-- adding parse context
+attr SymbolP AltP AltPs Inputs
+    inh pctx    :: ParseContext
+
+sem SymbolP | Root  alts.pctx = @lhs.pctx `toParseContext` (@x,@lhs.l,@lhs.r)
+                    lhs.res   = if (@x,@lhs.l,@lhs.r) `inParseContext` @lhs.pctx 
+                                then []
+                                else @alts.res
+
+-- fix issue of using elementary parsers individually
+attr SymbolP AltPs AltP Inputs
+    inh verified :: Bool
+    inh input    :: {A.Array Int Token}
+
+sem AltP   | Apply Seq    loc.verified = True
+sem Inputs | Cons         r.verified   = True
+
+{
+type ParseContext = IM.IntMap (IM.IntMap (S.Set Nt))
+
+-- TODO, move functions to GLL/Common or so
+toParseContext :: ParseContext -> (Nt, Int, Int) -> ParseContext
+toParseContext ctx (x, l, r) = IM.alter inner l ctx
+ where  inner mm = case mm of
+                    Nothing -> Just $ singleRX
+                    Just m  -> Just $ IM.insertWith (S.union) r singleX m
+        singleRX = IM.singleton r singleX
+        singleX  = S.singleton x
+
+inParseContext :: (Nt, Int, Int) -> ParseContext -> Bool
+inParseContext (x, l, r) ctx = maybe False inner $ IM.lookup l ctx
+ where  inner = maybe False (S.member x) . IM.lookup r
+}
+
+--TODO:
+-- * testing whether seedM is necessary .. :s
+-- * get rid of apply? f <$> g = satisfy f <*> g
+--      > perhaps better to get rid of satisfy
+--      > TODO test whether usage of satisfy breaks parser
+
+-- Add lifting of AltPs to SymbolP and SymbolP to AltP and AltP to AltPs,
+--  using a seed to generate non-terminal names
+--  relying on users not prefixing nt-names with _
+data SymbolP | GivenNt      r :: {Nt -> T_SymbolP a}
+
+attr SymbolP AltP AltPs Inputs
+    chn seed :: Int
+
+sem SymbolP | GivenNt   inst.lifted :: (T_SymbolP a)
+                        inst.lifted = @r @loc.name
+                        loc.name    = "_" ++ show @loc.seed
+                        loc.seed    = succ @lhs.seed
+                        lhs.seed    = @lifted.seed
+
+-- TODO add seedM to re-assign old seeds (and correcting them)
+-- necessary for recursion
+attr SymbolP AltP AltPs Inputs
+    chn seedM :: {M.Map Nt Int}
+
+sem SymbolP | Root      (alts.seed,alts.seedM,lhs.seed) = 
+                            case M.lookup @x @lhs.seedM of
+                            Nothing -> (@lhs.seed, M.insert @x @lhs.seed @lhs.seedM,@alts.seed)
+                            Just s  -> (s,@lhs.seedM, @lhs.seed)
+
+{
+-- combinators
+infixl 2 <::=>
+infixl 3 <|>
+infixl 4 <*>
+infixl 4 <*
+infixl 5 <$>
+infixl 5 <$
+(<*>) :: (IsAltParser t, IsSymbParser s) => t (a -> b) -> s a -> T_AltP b
+t <*> s = sem_AltP_Seq (toAlt t) (toSymb s)
+
+(<*) :: (IsSymbParser sl, IsSymbParser sr) => sl b -> sr a -> T_AltP b
+sl <* sr = const <$> sl <*> sr
+
+(<$>) :: (IsSymbParser s) => (a -> b) -> s a -> T_AltP b 
+f <$> s = sem_AltP_Apply f (toSymb s)
+
+(<$) :: (IsSymbParser s) => b -> s a -> T_AltP b 
+f <$ s = sem_AltP_Apply (const f) (toSymb s)
+
+(<|>) :: (IsAltParser t, HasAlts q) => t a -> q a -> T_AltPs a
+t <|> q = sem_AltPs_Cons (toAlt t) (altsOf q) 
+
+(<::=>) :: (HasAlts q) => String -> q b -> T_SymbolP b
+x <::=> ls = sem_SymbolP_Root x (altsOf ls)
+
+given_name = sem_SymbolP_GivenNt
+
+-- elementary parsers
+token = flip sem_SymbolP_Terminal id
+char c = sem_SymbolP_Terminal (Char c) (\(Char c) -> c)
+
+satisfy :: a -> T_AltP a
+satisfy = sem_AltP_Satisfy 
+epsilon = satisfy ()
+
+--- EBNF
+optional :: T_SymbolP a -> T_SymbolP (Maybe a)
+optional p = toSymb (   satisfy Nothing
+                    <|> Just <$> p
+                    )
+optional_ :: String -> T_SymbolP a -> T_SymbolP (Maybe a)
+optional_ x p = x <::=> satisfy Nothing <|> Just <$> p
+
+-- NOTE: user might define new combinators using given_name 
+--  when forgetting to use given_name: type checks but loops
+many :: T_SymbolP a -> T_SymbolP [a]
+many p = given_name (flip many_ p)
+
+many_ :: Nt -> T_SymbolP a -> T_SymbolP [a]
+many_ x p = x <::=> satisfy [] <|> (:) <$> p <*> many_ x p
+
+some p = given_name (flip some_ p) 
+
+some_ x p = x <::=> (:[]) <$> p <|> (:) <$> p <*> some_ x p
+
+--- helpers for parsing
+parseString p = parse p . map Char
+
+parse :: (IsSymbParser s) => s a -> [Token] -> [a]
+parse p str = res_Syn_SymbolP wrap 
+ where  m       = length str
+        wrap    = wrap_SymbolP (toSymb p) Inh_SymbolP
+                    {   rules_Inh_SymbolP = M.empty
+                    ,   l_Inh_SymbolP = 0
+                    ,   r_Inh_SymbolP = m
+                    ,   m_Inh_SymbolP = m
+                    ,   sppf_Inh_SymbolP = sppf
+                    ,   pctx_Inh_SymbolP = IM.empty
+                    ,   seed_Inh_SymbolP = 0
+                    ,   seedM_Inh_SymbolP = M.empty
+                    ,   verified_Inh_SymbolP = False
+                    ,   input_Inh_SymbolP    = A.array (0,m) (zip [0..] str)
+                    }
+        start   = symb_Syn_SymbolP wrap
+        rules   = rules_Syn_SymbolP wrap
+        sppf    = sppf_result (gllSPPF cfg str)
+        cfg     = case start of
+                    Nt x    -> Grammar x [] [ Rule x alts [] 
+                                            | (x, alts) <- M.assocs rules]
+                    Term t  -> Grammar "S" [] [Rule "S" [Alt "S" [start]] []]
+                    Error _ _ -> error "cannot parse error" 
+
+class HasAlts a where
+    altsOf :: a b -> T_AltPs b
+
+instance HasAlts T_AltP where
+    altsOf p = sem_AltPs_Cons p sem_AltPs_Nil
+
+instance HasAlts T_AltPs where
+    altsOf = id
+
+instance HasAlts T_SymbolP where
+    altsOf = altsOf . toAlt 
+
+class IsAltParser a where
+    toAlt :: a b -> T_AltP b
+
+instance IsAltParser T_SymbolP where
+    toAlt = (id <$>)
+
+instance IsAltParser T_AltP where
+    toAlt = id
+
+class IsSymbParser a where
+    toSymb :: a b -> T_SymbolP b
+
+instance IsSymbParser T_AltPs where
+    toSymb as = given_name (\nt -> nt <::=> as)
+
+instance IsSymbParser T_AltP where
+    toSymb = toSymb . altsOf
+
+instance IsSymbParser T_SymbolP where
+    toSymb = id
+}

@@ -1,0 +1,2 @@
+0.4.1.1
+~ updated package and interface of GLL.ParserCombinators to 0.4.1.1 version of `gll` package
