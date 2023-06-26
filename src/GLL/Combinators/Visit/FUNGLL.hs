@@ -16,7 +16,7 @@ type Command t  = State t (ContF t) -> State t (ContF t)
 data ContF t    = ContF (Input t -> Descr t -> Command t)
 
 type Parse_Symb t   = (Symbol t, Input t -> Slot t -> Int -> Int -> ContF t -> Command t, [Char])
-type Parse_Choice t = (Input t -> Nt -> Int -> ContF t -> Command t, Int)
+type Parse_Choice t = (Input t -> Nt -> Int -> ContF t -> Command t, [Char])
 type Parse_Seq t    = (Input t -> Nt -> [Symbol t] -> Int -> ContF t -> Command t, [Char])
 type Parse_Alt t    = Parse_Seq t
 
@@ -86,11 +86,11 @@ continue inp bsr@(g@(Slot x alpha beta),l,k,r) c s
         s'' = s' { uset = addDescr descr (uset s') }
 
 altStart :: Parse_Choice t
-altStart = (parser, 1)
+altStart = (parser, "a")
             where parser inp n l c s = s
 
 altOp :: Parse_Choice t -> Parse_Seq t -> Parse_Choice t
-altOp (p,_) (q, _) = (parser,1)
+altOp (p,_) (q, _) = (parser, "a")
             where parser inp n l c = p inp n l c . q inp n [] l c
 {- MUCH SLOWER ?
 altOp p q inp n l c s =
