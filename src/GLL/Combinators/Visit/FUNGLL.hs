@@ -15,9 +15,13 @@ import Data.Text (pack)
 type Command t  = State t (ContF t) -> State t (ContF t)
 data ContF t    = ContF (Input t -> Descr t -> Command t)
 
-type Parse_Symb t   = (Symbol t, Input t -> Slot t -> Int -> Int -> ContF t -> Command t, [Char])
-type Parse_Choice t = (Input t -> Nt -> Int -> ContF t -> Command t, [Char])
-type Parse_Seq t    = (Input t -> Nt -> [Symbol t] -> Int -> ContF t -> Command t, [Char])
+type Visited = [Nt]
+type Firstset t = S.Set (Symbol t)
+type SetGrammar t = Visited -> Firstset t
+
+type Parse_Symb t   = (Symbol t, Input t -> Slot t -> Int -> Int -> ContF t -> Command t, SetGrammar t)
+type Parse_Choice t = (Input t -> Nt -> Int -> ContF t -> Command t, SetGrammar t)
+type Parse_Seq t    = (Input t -> Nt -> [Symbol t] -> Int -> ContF t -> Command t, SetGrammar t)
 type Parse_Alt t    = Parse_Seq t
 
 parser_for :: (Parseable t) => Nt -> Parse_Symb t -> Input t -> ParseResult t
@@ -44,9 +48,16 @@ parse_apply = seqOp seqStart
 parse_seq :: Ord t => Parse_Seq t -> Parse_Symb t -> Parse_Seq t
 parse_seq = seqOp
 
+doNterm :: (Eq t) => Nt -> SetGrammar t -> SetGrammar t
+doNterm nt grammar vs
+                | nt `elem` vs = S.empty
+                | otherwise = set
+                where set = grammar (vs ++ [nt])
+
 nterm :: (Ord t) => Nt -> Parse_Choice t -> Parse_Symb t
-nterm n (p,_) = (Nt n, parser, "a")
-  where parser inp g l k c s
+nterm n (p, ch) = (Nt n, parser, grammar)
+  where grammar = doNterm n ch
+        parser inp g l k c s
           | null rs   = p inp n k cont_for s'
           | otherwise = compAll [ applyCF c (removePrefix len inp) (g,l,r)
                                 | r <- rs, let len = r - k ] s'
@@ -62,19 +73,30 @@ nterm n (p,_) = (Nt n, parser, "a")
 getSnd (_,a,_) = a
 
 term :: Parseable t => t -> Parse_Symb t
-term t = (Term t, getSnd (predicate (pack (show t)) (matches t)), "a")
+term t = (Term t, parser, grammar)
+        where   parser = getSnd (predicate (pack (show t)) (matches t))
+                grammar _ = S.fromList [Term t]
 
 seqStart :: Ord t => Parse_Seq t
-seqStart = (parser, "a")
-            where parser inp x beta l c = continue inp (Slot x [] beta, l, l, l) c
+seqStart = (parser, grammar)
+            where   parser inp x beta l c = continue inp (Slot x [] beta, l, l, l) c
+                    grammar _ = S.empty
+
+doseqop seq symb vs = set1
+                    where   set1 = seq vs
+                            set2 = symb vs
+                            newset = if null set1
+                                        then set2
+                                        else set1
 
 seqOp :: Ord t => Parse_Seq t -> Parse_Symb t -> Parse_Seq t
-seqOp (p, _) (s,q,_) = (parser, "a")
-        where parser inp x beta l c0 = p inp x (s:beta) l c1
-                where c1 = ContF c1f
-                        where c1f inp ((Slot _ alpha _),l,k) = q inp (Slot x (alpha++[s]) beta) l k c2
-                                where c2 = ContF c2f
-                                        where c2f inp (g,l,r) = continue inp (g,l,k,r) c0
+seqOp (p, seq) (s,q,symb) = (parser, grammar)
+        where   grammar = doseqop seq symb
+                parser inp x beta l c0 = p inp x (s:beta) l c1
+                    where c1 = ContF c1f
+                            where c1f inp ((Slot _ alpha _),l,k) = q inp (Slot x (alpha++[s]) beta) l k c2
+                                    where c2 = ContF c2f
+                                            where c2f inp (g,l,r) = continue inp (g,l,k,r) c0
 
 continue :: (Ord t) => Input t -> BSR t -> ContF t -> Command t
 continue inp bsr@(g@(Slot x alpha beta),l,k,r) c s
@@ -86,12 +108,20 @@ continue inp bsr@(g@(Slot x alpha beta),l,k,r) c s
         s'' = s' { uset = addDescr descr (uset s') }
 
 altStart :: Parse_Choice t
-altStart = (parser, "a")
-            where parser inp n l c s = s
+altStart = (parser, grammar)
+            where   grammar _ = S.empty
+                    parser inp n l c s = s
 
-altOp :: Parse_Choice t -> Parse_Seq t -> Parse_Choice t
-altOp (p,_) (q, _) = (parser, "a")
-            where parser inp n l c = p inp n l c . q inp n [] l c
+doaltop :: (Ord t) => SetGrammar t -> SetGrammar t -> SetGrammar t
+doaltop ch seq vs = newset
+                    where   set1 = ch vs
+                            set2 = seq vs
+                            newset = S.union set1 set2
+
+altOp :: (Ord t) => Parse_Choice t -> Parse_Seq t -> Parse_Choice t
+altOp (p,ch) (q, seq) = (parser, grammar)
+            where   grammar = doaltop ch seq
+                    parser inp n l c = p inp n l c . q inp n [] l c
 {- MUCH SLOWER ?
 altOp p q inp n l c s =
   let s1 = p inp n l counter_cont s
@@ -109,8 +139,9 @@ applyCF (ContF cf) inp a = cf inp a
 {- EXTENSIONS -}
 
 parse_lexical :: Nt -> RawParser t -> Parse_Symb t
-parse_lexical n scanner = (Nt n, parser, "a")
-  where parser inp g l k c s =
+parse_lexical n scanner = (Nt n, parser, grammar)
+  where grammar _ = S.empty
+        parser inp g l k c s =
           compAll [ applyCF c (removePrefix len inp) (g, l, k + len)
                   | prefix <- apply_scanner scanner inp
                   , let len = length prefix ] s
@@ -118,13 +149,14 @@ parse_lexical n scanner = (Nt n, parser, "a")
 {- EXPERIMENTAL -}
 
 andNot :: (Show t) => Parse_Symb t -> Parse_Symb t -> Parse_Symb t
-andNot (lnt,p, _) (rnt,q, _) = (Nt lhs_symb,parser, "a")
-  where lhs_symb = pack ("__andNot(" ++ show lnt ++","++ show rnt ++ ")")
+andNot (lnt,p, _) (rnt,q, _) = (Nt lhs_symb,parser, grammar)
+  where grammar _ = S.empty
+        lhs_symb = pack ("__andNot(" ++ show lnt ++","++ show rnt ++ ")")
         parser inp g l k c s = compAll [ applyCF c (removePrefix len inp) (g, l, r)
                                        | r <- rs, let len = r - k ]
                                        s2{successes = successes s}
-          where s1 = run_parse lhs_symb (lnt,p,"a") inp k s{successes = IM.empty}
-                s2 = run_parse lhs_symb (rnt,q,"a") inp k s1{successes = IM.empty}
+          where s1 = run_parse lhs_symb (lnt,p,grammar) inp k s{successes = IM.empty}
+                s2 = run_parse lhs_symb (rnt,q,grammar) inp k s1{successes = IM.empty}
                 rs = IS.toList $ IS.difference (IM.keysSet (successes s1))
                                                (IM.keysSet (successes s2))
 
@@ -133,22 +165,25 @@ ands :: (Show t) => [Parse_Symb t] -> Parse_Symb t
 ands = foldr andOp andStart
 
 andOp :: (Show t) => Parse_Symb t -> Parse_Symb t -> Parse_Symb t
-andOp (lnt,p, _) (rnt,q, _) = (Nt lhs_symb,parser, "a")
-  where lhs_symb = pack ("__and(" ++ show lnt ++","++ show rnt ++ ")")
+andOp (lnt,p, _) (rnt,q, _) = (Nt lhs_symb,parser, grammar)
+  where grammar _ = S.empty
+        lhs_symb = pack ("__and(" ++ show lnt ++","++ show rnt ++ ")")
         parser inp g l k c s = compAll [ applyCF c (removePrefix len inp) (g, l, r)
                                        | r <- rs, let len = r - k ] s2
-          where s1 = run_parse lhs_symb (lnt,p, "a") inp k s
-                s2 = run_parse lhs_symb (rnt,q, "a") inp k s1
+          where s1 = run_parse lhs_symb (lnt,p, grammar) inp k s
+                s2 = run_parse lhs_symb (rnt,q, grammar) inp k s1
                 rs = IS.toList $ IS.intersection (IM.keysSet (successes s1))
                                                  (IM.keysSet (successes s2))
 
 andStart :: Parse_Symb t
-andStart = (Nt (pack "__and_unit"), parser, "a")
-  where parser inp g l k c s = applyCF c inp (g, l, k) s
+andStart = (Nt (pack "__and_unit"), parser, grammar)
+  where grammar _ = S.empty
+        parser inp g l k c s = applyCF c inp (g, l, k) s
 
 predicate :: Parseable t => Nt -> (t -> Bool) -> Parse_Symb t
-predicate nt p = (Nt nt, parser, "a")
-  where parser inp g l k c s =
+predicate nt p = (Nt nt, parser, grammar)
+  where grammar _ = S.empty
+        parser inp g l k c s =
           compAll [ applyCF c (removePrefix len inp) (g, l, k + len)
                   | prefix <- apply_scanner (scanner_from_predicate p) inp
                   , let len = length prefix ] s
