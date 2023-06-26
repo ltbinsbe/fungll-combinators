@@ -26,7 +26,7 @@
   * Left recursion
   * Hidden left-recursion
 -}
-module GLL.Combinators.Test.Interface where
+module Main where
 
 import Control.Monad
 import Data.Char (ord)
@@ -36,7 +36,7 @@ import Data.IORef
 import GLL.Combinators.Interface
 import GLL.Parseable.Char ()
 
--- | Defines and executes multiple1 unit-tests 
+-- | Defines and executes multiple1 unit-tests
 main = do
     count <- newIORef 1
     let test mref name p arg_pairs = do
@@ -47,7 +47,7 @@ main = do
             forM_ arg_pairs $ \(str,res) -> do
                 case mref of -- empty memtable between parses
                     Nothing     -> return ()
-                    Just ref    -> memClear ref 
+                    Just ref    -> memClear ref
                 j <- readIORef subcount
                 modifyIORef subcount succ
                 let parse_res   = parseWithOptions [useMemoisation] p str
@@ -68,7 +68,7 @@ main = do
     test Nothing "<**>" ((\b -> ['1',b]) <$$ char 'a' <**> char 'b')
          [("ab", ["1b"])
          ,("b", [])]
-   
+
     --  Alternation
     test Nothing "<||>" (ord <$$ char 'a' <**> char 'b' <||> ord <$$> char 'c')
          [("a", []), ("ab", [98]), ("c", [99]), ("cab", [])]
@@ -91,7 +91,7 @@ main = do
     test Nothing "<::=> <||>" pX [("ac", "a"), ("bc", "b")]
 
     --  (Right) Recursion
-    let pX = "X" <::=> (+1) <$$ char 'a' <**> pX <||> satisfy 0 
+    let pX = "X" <::=> (+1) <$$ char 'a' <**> pX <||> satisfy 0
     test Nothing "rec1" pX [("", [0]), ("aa",[2]), (replicate 42 'a', [42]), ("bbb", [])]
 
     --  EBNF
@@ -124,20 +124,20 @@ main = do
     let pX = "X" <::=> pY <** optional (char 'z')
          where pY = "Y" <::=> length <$$> multiple (char 'a')
                           <||> length <$$> multiple1 (char 'b') <** char 'e'
-    test Nothing "multiple & multiple1 & optional" 
+    test Nothing "multiple & multiple1 & optional"
         pX  [("aaaz", [3]), ("bbbez", [3]), ("ez", []), ("z", [0])
-            ,("aa", [2]), ("bbe", [2]) 
+            ,("aa", [2]), ("bbe", [2])
             ]
 
     -- multiple with nullable argument
     let pX = 1 <$$ char '1' <||> satisfy 0
-    test Nothing "multiple (nullable arg)" 
+    test Nothing "multiple (nullable arg)"
         (multiple pX) [("11", [[1,1]]), ("",[[]]), ("e", [])]
 
     --  Simple ambiguities
     let pX = (++) <$$> pA <**> pB
         pA = "a" <$$ char 'a' <||> "aa" <$$ char 'a' <** char 'a'
-        pB = "b" <$$ char 'a' <||> "bb" <$$ char 'a' <** char 'a' 
+        pB = "b" <$$ char 'a' <||> "bb" <$$ char 'a' <** char 'a'
     test Nothing "aaa" pX   [("aaa", ["aab", "abb"])
                     ,("aa", ["ab"])]
 
@@ -157,10 +157,10 @@ main = do
     let pX = "X" <::=>  1 <$$ char 'a' <||> satisfy 0
         pY = "Y" <::=> (+) <$$> pX <**> pY
     -- shouldn't this be 1 + infinite 0's?
-    test Nothing "no parse infinite rec?" pY 
+    test Nothing "no parse infinite rec?" pY
         [("a", [])]
 
-    let pS = "S" <::=> ((\x y -> x+y+1) <$$ char '1' <**> pS <**> pS) <||> satisfy 0    
+    let pS = "S" <::=> ((\x y -> x+y+1) <$$ char '1' <**> pS <**> pS) <||> satisfy 0
     test Nothing "aho_S" pS [("", [0]), ("1", [1]), (replicate 5 '1', [5])]
 
 
@@ -168,33 +168,33 @@ main = do
     test Nothing "aho_S" pS [("", ["0"]), ("1", ["100"]), ("11", ["10100", "11000"])
                     ,(replicate 5 '1', aho_S_5)]
 
-    let pE = "E" <::=> (\x y z -> x+y+z) <$$> pE <**> pE <**> pE 
+    let pE = "E" <::=> (\x y z -> x+y+z) <$$> pE <**> pE <**> pE
                              <||> 1 <$$ char '1'
                              <||> satisfy 0
     test Nothing "EEE" pE [("", [0]), ("1", [1]), ("11", [2])
                   ,(replicate 5 '1', [5]), ("112", [])]
 
-    let pE = "E" <::=> (\x y z -> x++y++z) <$$> pE <**> pE <**> pE 
+    let pE = "E" <::=> (\x y z -> x++y++z) <$$> pE <**> pE <**> pE
                              <||> "1" <$$ char '1'
                              <||> satisfy "0"
     test Nothing "EEE ambig" pE [("", ["0"]), ("1", ["1"])
                         ,("11", ["110", "011", "101"]), ("111", _EEE_3)]
 
-    let pX = "X" <::=>  maybe 0 (const 1) <$$> optional (char 'z') 
+    let pX = "X" <::=>  maybe 0 (const 1) <$$> optional (char 'z')
                     <||> (+1) <$$> pX <** char '1'
     test Nothing "simple left-recursion" pX [("", [0]), ("z11", [3]), ("z", [1])
                                     ,(replicate 100 '1', [100])]
 
-    let pX = "X" <::=> satisfy 0 
+    let pX = "X" <::=> satisfy 0
                     <||> (+1) <$$ pB <**> pX <** char '1'
         pB = maybe 0 (const 0) <$$> optional (char 'z')
-    test Nothing "hidden left-recursion" pX 
+    test Nothing "hidden left-recursion" pX
         [("", [0]), ("zz11", [2]), ("z11", [2]), ("11", [2])
         ,(replicate 100 '1', [100])]
 
     let pX = "X" <::=> (+) <$$> pY <**> pA
         pA = 1 <$$ char 'a' <** char 'b' <||> satisfy 0
-        pY = "Y" <::=> satisfy 0 <||> pX 
+        pY = "Y" <::=> satisfy 0 <||> pX
     test Nothing "hidden left-recursion + infinite derivations" pX
         [("", [0]), ("ab", [1]), ("ababab", [3])]
 
@@ -207,16 +207,16 @@ main = do
     test (Just tab) "multiple1 & multiple & recursion + ambiguities" pY
         [("ab", [3]),("aa", [1,2]), (replicate 10 'a', [1..10])]
 
-    let tab = newMemoTable 
+    let tab = newMemoTable
         pX = "X" <::=>  1 <$$ char 'a' <||> satisfy 0
         pY = memo tab ("Y" <::=> (+) <$$> pX <**> pY)
     -- shouldn't this be 1 + infinite 0's?
-    test (Just tab) "no parse infinite rec?" pY 
+    test (Just tab) "no parse infinite rec?" pY
         [("a", [])]
 
     --  Higher ambiguities
     let tab = newMemoTable
-        pE = memo tab ("E" <::=> (\x y z -> x+y+z) <$$> pE <**> pE <**> pE 
+        pE = memo tab ("E" <::=> (\x y z -> x+y+z) <$$> pE <**> pE <**> pE
                              <||> 1 <$$ char '1'
                              <||> satisfy 0)
     test (Just tab) "EEE" pE [("", [0]), ("1", [1]), ("11", [2])
@@ -232,43 +232,43 @@ main = do
     putStrLn "Testing ambiguity reduction combinators"
     let pX = (++) <$$> pA <**>>> pB
         pA = "a" <$$ char 'a' <||> "aa" <$$ char 'a' <** char 'a'
-        pB = "b" <$$ char 'a' <||> "bb" <$$ char 'a' <** char 'a' 
+        pB = "b" <$$ char 'a' <||> "bb" <$$ char 'a' <** char 'a'
     test Nothing "A<A" pX   [("aaa", ["aab"]),("aa", ["ab"])]
 
     let pX = (++) <$$> pA <<<**> pB
         pA = "a" <$$ char 'a' <||> "aa" <$$ char 'a' <** char 'a'
-        pB = "b" <$$ char 'a' <||> "bb" <$$ char 'a' <** char 'a' 
-    test Nothing "A>A" pX   [("aaa", ["abb"]),("aa", ["ab"])] 
+        pB = "b" <$$ char 'a' <||> "bb" <$$ char 'a' <** char 'a'
+    test Nothing "A>A" pX   [("aaa", ["abb"]),("aa", ["ab"])]
 
     let pX = "X" <:=> multiple pY
          where pY = 1 <$$ char '1' <||> 2 <$$ char '1' <** char '1'
-    test Nothing "multiple" pX 
+    test Nothing "multiple" pX
       [("", [[]]), ("1", [[1]]), ("11", [[1,1],[2]]), ("111", [[1,1,1], [2,1], [1,2]])]
 
     let pX = "X" <:=> some pY
          where pY = 1 <$$ char '1' <||> 2 <$$ char '1' <** char '1'
-    test Nothing "some" pX 
+    test Nothing "some" pX
       [("", [[]]), ("1", [[1]]), ("11", [[2]]), ("111", [[2,1]])]
 
 {-
     -- a combinatar `fewest` (variant of multiple) should behave as follows
     let pX = "X" <:=> fewest pY
          where pY = 1 <$$ char '1' <||> 2 <$$ char '1' <** char '1'
-    test Nothing "some" pX 
+    test Nothing "some" pX
       [("", [[]]), ("1", [[1]]), ("11", [[2]]), ("111", [[2,1], [1,2]])]
 -}
 
     let pX = "X" <:=> many pY
          where pY = 1 <$$ char '1' <||> 2 <$$ char '1' <** char '1'
-    test Nothing "many" pX 
+    test Nothing "many" pX
       [("", [[]]), ("1", [[1]]), ("11", [[1,1]]), ("111", [[1,1,1]])]
- 
+
     let pX = "X" <:=> "1" <$$ char '1' <||> multipleSepBy (char '1') (char ';')
     test Nothing "multipleSepBy" pX
       [("", [""]), ("1", ["1", "1"]), ("1;1", ["11"])]
 
     -- pX matches epsilon, therefore leading to infinitely many derivations
-    let pX :: BNF Char Int 
+    let pX :: BNF Char Int
         pX = "X" <::=> 1 <$$ char '1' <||> sum <$$> multipleSepBy pX (char ';')
     test Nothing "multipleSepBy2" pX
       [("", [0]), ("1", [1,1]), ("1;1", [2]), (";1", [1]),  (";1;1", [2])]
@@ -286,14 +286,14 @@ main = do
     test Nothing "multiple & epsilon" pX
       [("", []), ("z", [0])]
 
-    let pX :: BNF Char Int 
+    let pX :: BNF Char Int
         pX = "X" <::=> 1 <$$ char '1' <||> sum <$$> multipleSepBy pX (char ';')
     test Nothing "multipleSepBy and multiple" (multiple pX)
       -- why not ("", [[0]]) ??
       [("", [[]]), ("1", [[1],[1]]), ("1;1", [[1,0,1],[1,1],[2]])
       ,(";1;1", [[0,1,0,1],[0,1,1], [0,2], [1,0,1], [1,1], [2]])]
 {-
-    let pX :: BNF Char Int 
+    let pX :: BNF Char Int
         pX = "X" <::=> 1 <$$ char '1' <||> sum <$$> multipleSepBy pX (char ';')
     test Nothing "manySepBy and multiple" (many pX)
       -- why not ("", [[0]]) ??
@@ -307,16 +307,16 @@ main = do
 
     {- tests fails to terminate as the grammar is infinitely big
     let pX :: BNF Char Int -> BNF Char Int
-        pX p = mkNt p "X" <::=> p 
+        pX p = mkNt p "X" <::=> p
                           <||> (+) <$$> pX (within (char '(') p (char ')')) <**> p
     test Nothing "growing sequence (left-recursive)" (pX ("hash" <:=> 1 <$$ char '1'))
       [("1", [1]), ("(1)1",[2]),("((1))(1)1", [3])
       ,("", []), ("11",[]), ("1(1)1", [])]
     -}
     {-let pX :: BNF Char Int -> BNF Char Int
-        pX p = mkNt p "X" <::=> p 
+        pX p = mkNt p "X" <::=> p
                           <||> (+) <$$> p <**> pX (within (char '(') p (char ')'))
-    test Nothing "growing sequence (right-recursive)" 
+    test Nothing "growing sequence (right-recursive)"
       (pX ("hash" <:=> 1 <$$ char '1'))
       [("1", [1]),("1(1)",[2]),("1(1)((1))", [3]),("1(1)((1))(((1)))",[4])
       ,("", []), ("11",[]), ("1(1)1", []), ("1(1)(1)", [])]-}

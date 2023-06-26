@@ -1,3 +1,4 @@
+{-# LANGUAGE TypeOperators #-}
 
 -- | Definition copied from TypeCompose-0.9.14: https://hackage.haskell.org/package/TypeCompose-0.9.14
 module GLL.Types.TypeCompose where
