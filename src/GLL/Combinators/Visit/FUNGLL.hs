@@ -55,7 +55,7 @@ doNterm nt grammar vs
                 where set = grammar (vs ++ [nt])
 
 nterm :: (Ord t) => Nt -> Parse_Choice t -> Parse_Symb t
-nterm n (p, ch) = (Nt n, parser, grammar)
+nterm n (p, ch) = (Nt n, parser, undefined)
   where grammar = doNterm n ch
         parser inp g l k c s
           | null rs   = p inp n k cont_for s'
@@ -73,16 +73,16 @@ nterm n (p, ch) = (Nt n, parser, grammar)
 getSnd (_,a,_) = a
 
 term :: Parseable t => t -> Parse_Symb t
-term t = (Term t, parser, grammar)
+term t = (Term t, parser, undefined)
         where   parser = getSnd (predicate (pack (show t)) (matches t))
                 grammar _ = S.fromList [Term t]
 
 seqStart :: Ord t => Parse_Seq t
-seqStart = (parser, grammar)
+seqStart = (parser, undefined)
             where   parser inp x beta l c = continue inp (Slot x [] beta, l, l, l) c
                     grammar _ = S.empty
 
-doseqop seq symb vs = set1
+doseqop seq symb vs = newset
                     where   set1 = seq vs
                             set2 = symb vs
                             newset = if null set1
@@ -90,7 +90,7 @@ doseqop seq symb vs = set1
                                         else set1
 
 seqOp :: Ord t => Parse_Seq t -> Parse_Symb t -> Parse_Seq t
-seqOp (p, seq) (s,q,symb) = (parser, grammar)
+seqOp (p, seq) (s,q,symb) = (parser, undefined)
         where   grammar = doseqop seq symb
                 parser inp x beta l c0 = p inp x (s:beta) l c1
                     where c1 = ContF c1f
@@ -108,7 +108,7 @@ continue inp bsr@(g@(Slot x alpha beta),l,k,r) c s
         s'' = s' { uset = addDescr descr (uset s') }
 
 altStart :: Parse_Choice t
-altStart = (parser, grammar)
+altStart = (parser, undefined)
             where   grammar _ = S.empty
                     parser inp n l c s = s
 
@@ -119,7 +119,7 @@ doaltop ch seq vs = newset
                             newset = S.union set1 set2
 
 altOp :: (Ord t) => Parse_Choice t -> Parse_Seq t -> Parse_Choice t
-altOp (p,ch) (q, seq) = (parser, grammar)
+altOp (p,ch) (q, seq) = (parser, undefined)
             where   grammar = doaltop ch seq
                     parser inp n l c = p inp n l c . q inp n [] l c
 {- MUCH SLOWER ?
@@ -139,7 +139,7 @@ applyCF (ContF cf) inp a = cf inp a
 {- EXTENSIONS -}
 
 parse_lexical :: Nt -> RawParser t -> Parse_Symb t
-parse_lexical n scanner = (Nt n, parser, grammar)
+parse_lexical n scanner = (Nt n, parser, undefined)
   where grammar _ = S.empty
         parser inp g l k c s =
           compAll [ applyCF c (removePrefix len inp) (g, l, k + len)
@@ -149,7 +149,7 @@ parse_lexical n scanner = (Nt n, parser, grammar)
 {- EXPERIMENTAL -}
 
 andNot :: (Show t) => Parse_Symb t -> Parse_Symb t -> Parse_Symb t
-andNot (lnt,p, _) (rnt,q, _) = (Nt lhs_symb,parser, grammar)
+andNot (lnt,p, _) (rnt,q, _) = (Nt lhs_symb,parser, undefined)
   where grammar _ = S.empty
         lhs_symb = pack ("__andNot(" ++ show lnt ++","++ show rnt ++ ")")
         parser inp g l k c s = compAll [ applyCF c (removePrefix len inp) (g, l, r)
@@ -165,7 +165,7 @@ ands :: (Show t) => [Parse_Symb t] -> Parse_Symb t
 ands = foldr andOp andStart
 
 andOp :: (Show t) => Parse_Symb t -> Parse_Symb t -> Parse_Symb t
-andOp (lnt,p, _) (rnt,q, _) = (Nt lhs_symb,parser, grammar)
+andOp (lnt,p, _) (rnt,q, _) = (Nt lhs_symb,parser, undefined)
   where grammar _ = S.empty
         lhs_symb = pack ("__and(" ++ show lnt ++","++ show rnt ++ ")")
         parser inp g l k c s = compAll [ applyCF c (removePrefix len inp) (g, l, r)
@@ -176,12 +176,12 @@ andOp (lnt,p, _) (rnt,q, _) = (Nt lhs_symb,parser, grammar)
                                                  (IM.keysSet (successes s2))
 
 andStart :: Parse_Symb t
-andStart = (Nt (pack "__and_unit"), parser, grammar)
+andStart = (Nt (pack "__and_unit"), parser, undefined)
   where grammar _ = S.empty
         parser inp g l k c s = applyCF c inp (g, l, k) s
 
 predicate :: Parseable t => Nt -> (t -> Bool) -> Parse_Symb t
-predicate nt p = (Nt nt, parser, grammar)
+predicate nt p = (Nt nt, parser, undefined)
   where grammar _ = S.empty
         parser inp g l k c s =
           compAll [ applyCF c (removePrefix len inp) (g, l, k + len)
