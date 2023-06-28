@@ -119,9 +119,11 @@ doaltop ch seq vs = newset
                             newset = S.union set1 set2
 
 altOp :: (Ord t) => Parse_Choice t -> Parse_Seq t -> Parse_Choice t
-altOp (p,ch) (q, seq) = (parser, undefined)
-            where   grammar = doaltop ch seq
-                    parser inp n l c = p inp n l c . q inp n [] l c
+altOp left right = (parser, undefined)
+  where (p,ch)   = left
+        (q, seq) = right
+        grammar = doaltop ch seq
+        parser inp n l c = p inp n l c . q inp n [] l c
 {- MUCH SLOWER ?
 altOp p q inp n l c s =
   let s1 = p inp n l counter_cont s
