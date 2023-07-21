@@ -20,7 +20,8 @@ type Visited = [Nt]
 type Firstset t = S.Set t
 type Followset t = M.Map Nt (S.Set t)
 type ToMatch = S.Set Nt
-type SetGrammar t = Visited -> Firstset t -> (Firstset t, Followset t, ToMatch)
+type FirstGramm t = Visited -> Firstset t -> Followset t -> (Firstset t)
+type SetGrammar t = Visited -> Firstset t -> Followset t -> (Firstset t, Followset t, ToMatch)
 type ChoiceGram t = Input t -> Nt -> Int -> ContF t -> Command t
 type SeqGram t = Input t -> Nt -> [Symbol t] -> Int -> ContF t -> Command t
 
@@ -59,11 +60,11 @@ parse_apply = seqOp seqStart
 parse_seq :: (Parseable t, Ord t) => Parse_Seq t -> Parse_Symb t -> Parse_Seq t
 parse_seq = seqOp
 
-doNterm :: (Eq t) => Nt -> SetGrammar t -> SetGrammar t
-doNterm nt grammar vs fs
+doNterm :: (Ord t, Eq t) => Nt -> SetGrammar t -> SetGrammar t
+doNterm nt grammar vs fs fol
                 | nt `elem` vs = (fs, M.empty, S.fromList [nt])
-                | otherwise = (first, M.empty, S.fromList [nt])
-                where (first, follow, tomatch) = grammar (vs ++ [nt]) fs
+                | otherwise = (first, follow, S.fromList [nt])
+                where (first, follow, tomatch) = grammar (vs ++ [nt]) fs (M.unionWith (S.union) fol follow)
 
 nterm :: (Ord t) => Nt -> Parse_Choice t -> Parse_Symb t
 nterm n choice = (Nt n, parser, grammar)
@@ -87,26 +88,28 @@ getSnd (_,a,_) = a
 term :: Parseable t => t -> Parse_Symb t
 term t = (Term t, parser, grammar)
         where   parser = getSnd (predicate (pack (show t)) (matches t))
-                grammar _ _ = (S.fromList [t], M.empty, S.empty)
+                grammar _ _ _ = (S.fromList [t], M.empty, S.empty)
 
 seqStart :: Ord t => Parse_Seq t
 seqStart = (parser, grammar)
             where   parser inp x beta l c = continue inp (Slot x [] beta, l, l, l) c
-                    grammar _ _ = (S.empty, M.empty, S.empty)
+                    grammar _ _ _ = (S.empty, M.empty, S.empty)
 
 seqfirst :: (Parseable t) => Firstset t -> Firstset t -> Firstset t
 seqfirst fs1 fs2
     | null fs1 = nfs
     | eps `elem` fs1 = S.union nfs (S.delete eps fs1)
     | otherwise = fs1
-    where nfs = if null fs2
-                    then S.fromList [eos]
-                    else fs2
+    where nfs = fs2
+
+                -- if null fs2
+                --     then S.fromList [eos]
+                --     else fs2
 
 doseqop :: (Parseable t) => SetGrammar t -> SetGrammar t -> SetGrammar t
-doseqop seq symb vs fs = (newfirst, newfollow, newtomatch)
-                    where   (first1, follow1, tomatch1) = seq vs fs
-                            (first2, _, _) = symb vs fs
+doseqop seq symb vs fs fol = (newfirst, newfollow, newtomatch)
+                    where   (first1, follow1, tomatch1) = seq vs fs fol
+                            (first2, _, _) = symb vs fs fol
                             newfirst = seqfirst first1 first2
                             newfollow = if null tomatch1
                                         then follow1
@@ -135,13 +138,13 @@ continue inp bsr@(g@(Slot x alpha beta),l,k,r) c s
 
 altStart :: Parse_Choice t
 altStart = (parser, grammar)
-            where   grammar _ _ = (S.empty, M.empty, S.empty)
+            where   grammar _ _ _ = (S.empty, M.empty, S.empty)
                     parser inp n l c s = s
 
 doaltop :: (Parseable t, Ord t) => SetGrammar t -> SetGrammar t -> SetGrammar t
-doaltop ch seq vs fs = (newfirst, newfollow, S.empty)
-                    where   (first1, follow1, _) = ch vs fs
-                            (first2, follow2, tomatch2) = seq vs fs
+doaltop ch seq vs fs fol = (newfirst, newfollow, S.empty)
+                    where   (first1, follow1, _) = ch vs fs fol
+                            (first2, follow2, tomatch2) = seq vs fs fol
                             nfirst2 = if null first2
                                         then S.insert eps first2
                                         else S.delete eos first2
@@ -157,7 +160,7 @@ nextchar inp l = arr A.! l
 
 isinfirst :: (Parseable t, Ord t) => t -> Firstset t -> Bool
 isinfirst symbol first = if symbol == eos
-                        then S.member eps first
+                        then True -- S.member eps first
                         else S.member symbol first
 
 createparse :: (Parseable t, Ord t) =>  Firstset t -> ChoiceGram t -> SeqGram t -> ChoiceGram t
@@ -165,15 +168,14 @@ createparse first p q inp n l c = if isinfirst (nextchar inp l) first
                                     then p inp n l c . q inp n [] l c
                                     else p inp n l c
 
-
 altOp :: (Parseable t, Ord t) => Parse_Choice t -> Parse_Seq t -> Parse_Choice t
 altOp left right = (parser, grammar)
-            where   (p, ch) = left
-                    (q, seq) = right
-                    grammar = doaltop ch seq
-                    (firstset, _, _) = seq [] S.empty
-                    parser = createparse firstset p q
-
+  where
+    (p, ch) = left
+    (q, seq) = right
+    grammar vs fs fol = doaltop ch seq vs fs fol
+        where newfirst = justFirst seq vs fs fol
+    parser = createparse newfirst p q
 
 -- altOp :: (Eq t, Parseable t, Ord t) => Parse_Choice t -> Parse_Seq t -> Parse_Choice t
 -- altOp left right = (parser, grammar)
@@ -199,33 +201,37 @@ applyCF (ContF cf) inp a = cf inp a
 
 parse_lexical :: Nt -> RawParser t -> Parse_Symb t
 parse_lexical n scanner = (Nt n, parser, grammar)
-  where grammar _ _ = (S.empty, M.empty, S.empty)
+  where grammar _ _ _ = (S.empty, M.empty, S.empty)
         parser inp g l k c s =
           compAll [ applyCF c (removePrefix len inp) (g, l, k + len)
                   | prefix <- apply_scanner scanner inp
                   , let len = length prefix ] s
 
 -- For testing purposes
+justFirst :: SetGrammar t -> FirstGramm t
+justFirst seq vs fs fol = first
+                where (first, _, _) = seq vs fs fol
+
 getFirstSymb :: Parse_Symb t -> Firstset t
 getFirstSymb symb = first
-                where (first, _, _) = grammar [] S.empty
+                where (first, _, _) = grammar [] S.empty M.empty
                         where (_, _, grammar) = symb
 
 getFirstSeq :: Parse_Seq t -> Firstset t
 getFirstSeq seq = first
-                where (first, _, _) = grammar [] S.empty
+                where (first, _, _) = grammar [] S.empty M.empty
                         where (_, grammar) = seq
 
 getFirstChoice :: Parse_Choice t -> Firstset t
 getFirstChoice choice = first
-                where (first, _, _) = grammar [] S.empty
+                where (first, _, _) = grammar [] S.empty M.empty
                         where (_, grammar) = choice
 
 {- EXPERIMENTAL -}
 
 andNot :: (Show t) => Parse_Symb t -> Parse_Symb t -> Parse_Symb t
 andNot (lnt,p, _) (rnt,q, _) = (Nt lhs_symb,parser, grammar)
-  where grammar _ _ = (S.empty, M.empty, S.empty)
+  where grammar _ _ _ = (S.empty, M.empty, S.empty)
         lhs_symb = pack ("__andNot(" ++ show lnt ++","++ show rnt ++ ")")
         parser inp g l k c s = compAll [ applyCF c (removePrefix len inp) (g, l, r)
                                        | r <- rs, let len = r - k ]
@@ -241,7 +247,7 @@ ands = foldr andOp andStart
 
 andOp :: (Show t) => Parse_Symb t -> Parse_Symb t -> Parse_Symb t
 andOp (lnt,p, _) (rnt,q, _) = (Nt lhs_symb,parser, grammar)
-  where grammar _ _ = (S.empty, M.empty, S.empty)
+  where grammar _ _ _ = (S.empty, M.empty, S.empty)
         lhs_symb = pack ("__and(" ++ show lnt ++","++ show rnt ++ ")")
         parser inp g l k c s = compAll [ applyCF c (removePrefix len inp) (g, l, r)
                                        | r <- rs, let len = r - k ] s2
@@ -252,12 +258,12 @@ andOp (lnt,p, _) (rnt,q, _) = (Nt lhs_symb,parser, grammar)
 
 andStart :: Parse_Symb t
 andStart = (Nt (pack "__and_unit"), parser, grammar)
-  where grammar _ _ = (S.empty, M.empty, S.empty)
+  where grammar _ _ _ = (S.empty, M.empty, S.empty)
         parser inp g l k c s = applyCF c inp (g, l, k) s
 
 predicate :: Parseable t => Nt -> (t -> Bool) -> Parse_Symb t
 predicate nt p = (Nt nt, parser, grammar)
-  where grammar _ _ = (S.empty, M.empty, S.empty)
+  where grammar _ _ _ = (S.empty, M.empty, S.empty)
         parser inp g l k c s =
           compAll [ applyCF c (removePrefix len inp) (g, l, k + len)
                   | prefix <- apply_scanner (scanner_from_predicate p) inp
