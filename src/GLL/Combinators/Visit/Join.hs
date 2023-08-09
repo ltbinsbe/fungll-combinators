@@ -53,13 +53,13 @@ join_seq local_opts pl' pr' =
       SymbExpr (vpa1,vpa2,vpa3)  = mkRule pr' in AltExpr
   (vimp1++[vpa1], parse_seq vimp2 vpa2, sem_seq local_opts vimp3 vpa3)
 
-join_lexical :: Nt -> RawParser t -> SymbExpr t [t]
-join_lexical nt regex = SymbExpr (Nt nt, parse_lexical nt regex, sem_slice regex)
+-- join_lexical :: Nt -> RawParser t -> SymbExpr t [t]
+-- join_lexical nt regex = SymbExpr (Nt nt, parse_lexical nt regex, sem_slice regex)
 
-join_andNot :: (Show t) => SymbExpr t a -> SymbExpr t b -> SymbExpr t a
-join_andNot (SymbExpr (_,p_parser,p_sem)) (SymbExpr (_, q_parser, q_sem)) =
-  SymbExpr (s, parser, p_sem)
-  where parser@(s, _, _) = andNot p_parser q_parser
+-- join_andNot :: (Show t) => SymbExpr t a -> SymbExpr t b -> SymbExpr t a
+-- join_andNot (SymbExpr (_,p_parser,p_sem)) (SymbExpr (_, q_parser, q_sem)) =
+--   SymbExpr (s, parser, p_sem)
+--   where parser@(s, _) = andNot p_parser q_parser
 
 -- |
 -- Class for lifting to 'SymbExpr'.

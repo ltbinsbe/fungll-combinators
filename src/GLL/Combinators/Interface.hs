@@ -190,7 +190,7 @@ module GLL.Combinators.Interface (
     -- *** Nonterminal introduction
     (<:=>),(<::=>),chooses,chooses_prec,
     -- *** Difference
-    (<\\>),
+    -- (<\\>),
     -- * Types
     -- ** Grammar (combinator expression) types
     BNF, SymbExpr, AltExpr, AltExprs,
@@ -236,7 +236,7 @@ module GLL.Combinators.Interface (
      -- * Memoisation
     memo, newMemoTable, memClear, MemoTable, MemoRef, useMemoisation,
      -- * Scannerless parsing, using `RawParser`s
-    RawParser, lexical,
+    RawParser, -- lexical,
     ) where
 
 import GLL.Combinators.Options
@@ -446,9 +446,9 @@ pl' <**>>> pr' = join_seq [maximumPivot] pl' pr'
 pl' <<<**> pr' = join_seq [minimumPivot] pl' pr'
 
 
-infixr 5 <\\>
-(<\\>) :: (Show t) => SymbExpr t a -> SymbExpr t b -> SymbExpr t a
-p <\\> q = p `join_andNot` q
+-- infixr 5 <\\>
+-- (<\\>) :: (Show t) => SymbExpr t a -> SymbExpr t b -> SymbExpr t a
+-- p <\\> q = p `join_andNot` q
 
 infixr 3 <||>
 -- |
@@ -480,8 +480,8 @@ term_parser :: Parseable t => t -> (t -> a) -> SymbExpr t a
 term_parser t f = SymbExpr (Term t, parse_term t,\_ _ _ inp l _ -> return [f (fst inp A.! l)])
 
 -- | Create a symbol given a `RawParser` (see `GLL.Types.Input`)
-lexical :: String -> RawParser t -> SymbExpr t [t]
-lexical nt regex = join_lexical (pack nt) regex
+-- lexical :: String -> RawParser t -> SymbExpr t [t]
+-- lexical nt regex = join_lexical (pack nt) regex
 
 -- | Parse a single character.
 --
@@ -577,7 +577,7 @@ token name = term_parser (upcast (Token name Nothing)) (unwrap . downcast)
  where  unwrap (Just (Token name' (Just i))) | name == name' = i
         unwrap _  = error "tokenT: downcast, or token without lexeme"
 
-epsilon :: (Show t, Ord t) => AltExpr t ()
+epsilon :: (Parseable t, Show t, Ord t) => AltExpr t ()
 epsilon = AltExpr ([], seqStart ,\_ _ _ _ _ l r ->
                         if l == r then return [(l,())] else return [] )
     where x = "__eps"
