@@ -52,13 +52,13 @@ parse_apply = seqOp seqStart
 parse_seq :: (Parseable t, Ord t) => Parse_Seq t -> Parse_Symb t -> Parse_Seq t
 parse_seq = seqOp
 
-doNterm :: (Ord t, Eq t) => Nt -> SetGrammar t -> SetGrammar t
+doNterm :: (Parseable t, Ord t, Eq t) => Nt -> SetGrammar t -> SetGrammar t
 doNterm nt grammar vs fs fol
                 | nt `elem` vs = fs
                 | otherwise = first
                 where first = grammar (vs ++ [nt]) fs fol
 
-nterm :: (Ord t) => Nt -> Parse_Choice t -> Parse_Symb t
+nterm :: (Parseable t, Ord t) => Nt -> Parse_Choice t -> Parse_Symb t
 nterm n choice = (Nt n, parser)
   where p = choice
         parser inp g l k c vs fs fol = (rs' ,gres)
@@ -91,12 +91,6 @@ seqfirst fs1 fs2
     | S.member eps fs1 = S.union (S.delete eps fs1) fs2
     | otherwise = fs1
 
--- doseqop :: (Parseable t) => GrammarTuple t -> GrammarTuple t -> GrammarTuple t
--- doseqop seq symb = newfirst
---                     where   (first1, follow1, tomatch1) = seq
---                             (first2, follow2, tomatch2) = symb
---                             newfirst = seqfirst first1 first2
-
 seqOp :: (Parseable t, Ord t) => Parse_Seq t -> Parse_Symb t -> Parse_Seq t
 seqOp left right = parser
         where   p = left
@@ -113,7 +107,7 @@ seqOp left right = parser
 
 continue :: (Parseable t, Ord t) => Input t -> BSR t -> ContF t -> Firstset t -> Command t
 continue inp bsr@(g@(Slot x alpha beta),l,k,r) c fol s
-  | not (isinfirst (nextchar inp r) fol) = s
+--   | not (isinfirst (nextchar inp r) fol) = s
   | hasDescr descr (uset s) = s'
   | otherwise               = applyCF c inp descr s''
   where descr = (g,l,r)
@@ -130,8 +124,8 @@ nextchar inp l = arr A.! l
                 where   (arr, _) = inp
 
 isinfirst :: (Parseable t, Ord t) => t -> Firstset t -> Bool
-isinfirst symbol first = if symbol == eos || S.member eps first
-                        then True -- S.member eps first
+isinfirst symbol first = if symbol == eos || S.member eps first || first == S.empty || S.member eos first
+                        then True
                         else S.member symbol first
 
 -- followsetMaybe :: Maybe (S.Set t) -> S.Set t
@@ -151,7 +145,7 @@ altOp left right = parser
                         then command_p . command_q
                         else command_p
             newfirst = if null first_q
-                        then fol -- Empty sequence is an epsilon transition
+                        then S.fromList [eps] --(fol) Empty sequence is an epsilon transition
                         else first_q
             gramfirst = S.union first_p newfirst
 
