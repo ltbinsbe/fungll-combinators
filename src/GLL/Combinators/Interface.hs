@@ -286,7 +286,7 @@ printParseDataWithOptions popts opts p' input =
           mkRule ("__Augment" <:=> OO [id <$$> p'])
         start       = pack "__Start"
         arr         = mkInput input
-        m           = length arr
+        m           = inputLength arr
         parse_res   = parser_for start vpa2 arr
     in do startTime <- getCurrentTime
           putStrLn $ "#tokens:              " ++ (show m)
