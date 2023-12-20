@@ -19,18 +19,19 @@ type Command t  = State t (ContF t) -> State t (ContF t)
 data ContF t    = ContF (Input t -> Descr t -> Command t)
 
 type Firstset t = S.Set t
+type Visited = S.Set Nt
 
-type Parse_Symb t   = (Symbol t, Input t -> Slot t -> Int -> Int -> ContF t -> Firstset t -> (Command t, Firstset t))
-type Parse_Choice t = Input t -> Nt -> Int -> ContF t -> Firstset t -> (Command t, Firstset t)
-type Parse_Seq t    = Input t -> Nt -> [Symbol t] -> Int -> ContF t -> Firstset t -> (Command t, Firstset t)
+type Parse_Symb t   = (Symbol t, Input t -> Slot t -> Int -> Int -> ContF t -> Visited -> Firstset t -> (Command t, Firstset t))
+type Parse_Choice t = Input t -> Nt -> Int -> ContF t -> Visited -> Firstset t -> (Command t, Firstset t)
+type Parse_Seq t    = Input t -> Nt -> [Symbol t] -> Int -> ContF t -> Visited -> Firstset t -> (Command t, Firstset t)
 type Parse_Alt t    = Parse_Seq t
 
 parser_for :: (Parseable t) => Nt -> Parse_Symb t -> Input t -> ParseResult t
 parser_for x p inp = resultFromState inp (run_parse x p inp 0 emptyState)
 
-run_parse :: Nt -> Parse_Symb t -> Input t -> Int ->
+run_parse :: (Parseable t, Ord t) => Nt -> Parse_Symb t -> Input t -> Int ->
                                 State t (ContF t) -> State t (ContF t)
-run_parse x p@(y,pf) inp l = fst $ pf inp (Slot x [y] []) l l counter_cont S.empty
+run_parse x p@(y,pf) inp l = fst $ pf inp (Slot x [y] []) l l counter_cont S.empty (S.fromList [eps])
 
 counter_cont :: ContF t
 counter_cont = ContF cf
@@ -51,10 +52,11 @@ parse_seq = seqOp
 
 nterm :: (Parseable t, Ord t) => Nt -> Parse_Choice t -> Parse_Symb t
 nterm n p = (Nt n, parser)
-  where parser inp g l k c fs = (rs' , gres)
-            where -- s_grammar = snd $ p inp n k cont_for fs -- Firstset we pass on if it works
-                  gres = S.fromList [eps] -- Firstset we pass on for now epsilon
-                  rs' s | null rs   = fst (p inp n k cont_for fs) s'
+  where parser inp g l k c vs fs = (rs' , gres)
+            where gres = if S.member n vs
+                         then S.fromList [eps]
+                         else snd $ p inp n k cont_for (S.insert n vs) fs
+                  rs' s | null rs   = fst (p inp n k cont_for vs fs) s'
                         | otherwise = compAll [ applyCF c (removePrefix len inp) (g,l,r)
                                             | r <- rs, let len = r - k ] s'
                     where   s' = s { grel = addCont (n,k) (g,l,c) (grel s) }
@@ -70,10 +72,7 @@ term :: Parseable t => t -> Parse_Symb t
 term t = (Term t, snd (predicate (pack (show t)) (matches t) t))
 
 seqStart :: (Parseable t, Ord t) => Parse_Seq t
-seqStart inp x beta l c fs = (continue inp (Slot x [] beta, l, l, l) c, nfs)
-        where nfs = if S.null fs
-                    then S.fromList [eps]
-                    else fs
+seqStart inp x beta l c _ fs = (continue inp (Slot x [] beta, l, l, l) c, fs)
 
 -- seqOp :: Ord t => Parse_Seq t -> Parse_Symb t -> Parse_Seq t
 -- seqOp p (s,q) inp x beta l c0 = p inp x (s:beta) l c1
@@ -86,12 +85,12 @@ seqOp :: Ord t => Parse_Seq t -> Parse_Symb t -> Parse_Seq t
 seqOp left right = parser
         where   p = left
                 (s, q) = right
-                parser inp x beta l c0 fs = (command_p, first_p)
+                parser inp x beta l c0 vs fs = (command_p, first_p)
                     where
-                    (command_q, first_q) = q inp (Slot x [] beta) l l c0 fs
-                    (command_p, first_p) = p inp x (s:beta) l c1 first_q
+                    (command_q, first_q) = q inp (Slot x [] beta) l l c0 vs fs
+                    (command_p, first_p) = p inp x (s:beta) l c1 vs first_q
                         where c1 = ContF c1f
-                                where c1f inp ((Slot _ alpha _),l,k) = fst $ q inp (Slot x (alpha++[s]) beta) l k c2 fs
+                                where c1f inp ((Slot _ alpha _),l,k) = fst $ q inp (Slot x (alpha++[s]) beta) l k c2 vs fs
                                         where c2 = ContF c2f
                                                 where c2f inp (g,l,r) = continue inp (g,l,k,r) c0
 
@@ -106,7 +105,7 @@ continue inp bsr@(g@(Slot x alpha beta),l,k,r) c s
 
 altStart :: Parse_Choice t
 altStart = parser
-            where  parser inp n l c _ = (id, S.empty)
+            where  parser inp n l c _ _ = (id, S.empty)
 
 nextchar :: Input t -> Int -> t
 nextchar inp l = arr A.! l
@@ -125,17 +124,17 @@ altOp left right = parser
   where
     p = left
     q = right
-    parser inp n l c fs = (command, newfirst)
+    parser inp n l c vs fs = (command, newfirst)
         where
-            (command_p, first_p) = p inp n l c fs
-            (command_q, first_q) = q inp n [] l c fs
+            (command_p, first_p) = p inp n l c vs fs
+            (command_q, first_q) = q inp n [] l c vs fs
             newfirst = S.union first_p first_q
-            -- command = traceShow (nextchar inp l, first_q) (if isinfirst (nextchar inp l) first_q
-            --             then command_p . command_q
-            --             else command_p)
-            command = if isinfirst (nextchar inp l) first_q
+            command = traceShow (nextchar inp l, first_q, isinfirst (nextchar inp l) first_q) (if isinfirst (nextchar inp l) first_q
                         then command_p . command_q
-                        else command_p
+                        else command_p)
+            -- command = if isinfirst (nextchar inp l) first_q
+            --             then command_p . command_q
+            --             else command_p
 
 -- first_to_char :: Firstset t -> [Char]
 -- first_to_char fs =
@@ -199,7 +198,7 @@ applyCF (ContF cf) inp a = cf inp a
 
 predicate :: Parseable t => Nt -> (t -> Bool) -> t -> Parse_Symb t
 predicate nt p t = (Nt nt, parser)
-  where parser inp g l k c fs = (command, first)
+  where parser inp g l k c _ fs = (command, first)
             where   first = S.fromList [t]-- The firstset we pass on, just the terminal
                     command s =  compAll [ applyCF c (removePrefix len inp) (g, l, k + len)
                                 | prefix <- apply_scanner (scanner_from_predicate p) inp
