@@ -5,6 +5,7 @@ import GLL.Types.Input
 import Data.Text
 import GLL.Types.Grammar
 import Data.Set as S
+import GLL.Combinators.Interface
 
 nt :: Text
 nt = "X"
@@ -60,3 +61,26 @@ xseq20 = seqStart `seqOp` pz2
 xseq21 = seqStart `seqOp` parse_term '1'
 
 pforz2 = parser_for nt2 px2 (mkInput "1")
+
+pforz21 = parser_for nt2 px2 (mkInput "")
+
+pforz22 = parser_for nt2 px2 (mkInput "z")
+
+
+
+-- More
+
+ntMore :: Text
+ntMore = "More"
+
+altops = (altStart `altOp` seqStart) `altOp` seq2
+
+seq2 = ((seqStart `seqOp` parse_term ',') `seqOp` parse_term 'a') `seqOp` more
+
+more = nterm ntMore altops
+
+moreinput = parser_for ntMore more (mkInput ",a")
+
+
+-- pX :: BNF Char Int
+-- pX = "X" <::=> 1 <$$ char '1' <||> sum <$$> multipleSepBy pX (char ';')
