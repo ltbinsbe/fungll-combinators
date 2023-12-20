@@ -282,11 +282,12 @@ printParseData = printParseDataWithOptions [] []
 -- | Variant of 'printParseData' which can be controlled by 'ParseOption's
 printParseDataWithOptions :: (Parseable t, IsSymbExpr s, Show a) => ParseOptions -> CombinatorOptions -> s t a -> [t] -> IO ()
 printParseDataWithOptions popts opts p' input =
-    let SymbExpr (Nt lower_start,vpa2,vpa3) = toSymb p'
+    let SymbExpr (Nt lower_start, vpa2, vpa3) =
+          mkRule ("__Augment" <:=> OO [id <$$> p'])
         start       = pack "__Start"
-        parse_res   = parser_for start vpa2 arr
         arr         = mkInput input
         m           = inputLength arr
+        parse_res   = parser_for start vpa2 arr
     in do startTime <- getCurrentTime
           putStrLn $ "#tokens:              " ++ (show m)
           putStrLn $ "#successes:           " ++ (show $ res_successes parse_res)
