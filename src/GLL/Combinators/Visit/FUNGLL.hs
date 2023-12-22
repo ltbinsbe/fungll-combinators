@@ -74,13 +74,6 @@ term t = (Term t, snd (predicate (pack (show t)) (matches t) t))
 seqStart :: (Parseable t, Ord t) => Parse_Seq t
 seqStart inp x beta l c _ fs = (continue inp (Slot x [] beta, l, l, l) c, fs)
 
--- seqOp :: Ord t => Parse_Seq t -> Parse_Symb t -> Parse_Seq t
--- seqOp p (s,q) inp x beta l c0 = p inp x (s:beta) l c1
---   where c1 = ContF c1f
---          where c1f inp ((Slot _ alpha _),l,k) = q inp (Slot x (alpha++[s]) beta) l k c2
---                 where c2 = ContF c2f
---                        where c2f inp (g,l,r) = continue inp (g,l,k,r) c0
-
 seqOp :: Ord t => Parse_Seq t -> Parse_Symb t -> Parse_Seq t
 seqOp left right = parser
         where   p = left
@@ -111,13 +104,11 @@ nextchar :: Input t -> Int -> t
 nextchar inp l = arr A.! l
                 where   (arr, _) = inp
 
--- nextchar :: Input t -> Int -> t
--- nextchar inp l = list !! l
---                 where   (arr, list) = inp
-
-
 isinfirst :: (Parseable t, Ord t) => t -> Firstset t -> Bool
-isinfirst symbol first = S.member eps first || S.member symbol first
+isinfirst symbol first = S.member eps first || S.member True (boolset symbol first)
+
+boolset :: (Parseable t) => t -> Firstset t -> S.Set Bool
+boolset symbol fs = S.map (matches symbol) fs
 
 altOp :: (Parseable t, Ord t) => Parse_Choice t -> Parse_Seq t -> Parse_Choice t
 altOp left right = parser
@@ -129,18 +120,12 @@ altOp left right = parser
             (command_p, first_p) = p inp n l c vs fs
             (command_q, first_q) = q inp n [] l c vs fs
             newfirst = S.union first_p first_q
-            command = traceShow (nextchar inp l, first_q, isinfirst (nextchar inp l) first_q) (if isinfirst (nextchar inp l) first_q
-                        then command_p . command_q
-                        else command_p)
-            -- command = if isinfirst (nextchar inp l) first_q
+            -- command = traceShow (nextchar inp l, first_q, isinfirst (nextchar inp l) first_q) (if isinfirst (nextchar inp l) first_q
             --             then command_p . command_q
-            --             else command_p
-
--- first_to_char :: Firstset t -> [Char]
--- first_to_char fs =
-
--- t_to_string :: t -> [Char]
--- t_to_string =
+            --             else command_p)
+            command = if isinfirst (nextchar inp l) first_q
+                        then command_p . command_q
+                        else command_p
 
 {- MUCH SLOWER ?
 altOp p q inp n l c s =
@@ -199,7 +184,7 @@ applyCF (ContF cf) inp a = cf inp a
 predicate :: Parseable t => Nt -> (t -> Bool) -> t -> Parse_Symb t
 predicate nt p t = (Nt nt, parser)
   where parser inp g l k c _ fs = (command, first)
-            where   first = S.fromList [t]-- The firstset we pass on, just the terminal
+            where   first = S.fromList [t] -- The firstset we pass on, just the terminal
                     command s =  compAll [ applyCF c (removePrefix len inp) (g, l, k + len)
                                 | prefix <- apply_scanner (scanner_from_predicate p) inp
                                 , let len = length prefix ] s
