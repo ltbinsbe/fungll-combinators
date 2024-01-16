@@ -19,11 +19,12 @@ type Command t  = State t (ContF t) -> State t (ContF t)
 data ContF t    = ContF (Input t -> Descr t -> Command t)
 
 type Firstset t = S.Set t
-type Visited = S.Set Nt
+-- type Visited = S.Set Nt
+type Visited t = M.Map Nt (Firstset t)
 
-type Parse_Symb t   = (Symbol t, Input t -> Slot t -> Int -> Int -> ContF t -> Visited -> Firstset t -> (Command t, Firstset t))
-type Parse_Choice t = Input t -> Nt -> Int -> ContF t -> Visited -> Firstset t -> (Command t, Firstset t)
-type Parse_Seq t    = Input t -> Nt -> [Symbol t] -> Int -> ContF t -> Visited -> Firstset t -> (Command t, Firstset t)
+type Parse_Symb t   = (Symbol t, Input t -> Slot t -> Int -> Int -> ContF t -> Visited t -> Firstset t -> (Command t, Firstset t))
+type Parse_Choice t = Input t -> Nt -> Int -> ContF t -> Visited t -> Firstset t -> (Command t, Firstset t)
+type Parse_Seq t    = Input t -> Nt -> [Symbol t] -> Int -> ContF t -> Visited t -> Firstset t -> (Command t, Firstset t)
 type Parse_Alt t    = Parse_Seq t
 
 parser_for :: (Parseable t) => Nt -> Parse_Symb t -> Input t -> ParseResult t
@@ -31,7 +32,7 @@ parser_for x p inp = resultFromState inp (run_parse x p inp 0 emptyState)
 
 run_parse :: (Parseable t, Ord t) => Nt -> Parse_Symb t -> Input t -> Int ->
                                 State t (ContF t) -> State t (ContF t)
-run_parse x p@(y,pf) inp l = fst $ pf inp (Slot x [y] []) l l counter_cont S.empty (S.fromList [eps])
+run_parse x p@(y,pf) inp l = fst $ pf inp (Slot x [y] []) l l counter_cont M.empty (S.fromList [eps])
 
 counter_cont :: ContF t
 counter_cont = ContF cf
@@ -50,12 +51,16 @@ parse_apply = seqOp seqStart
 parse_seq :: Ord t => Parse_Seq t -> Parse_Symb t -> Parse_Seq t
 parse_seq = seqOp
 
+retreive_lookup :: Maybe (Firstset t) -> Firstset t
+retreive_lookup (Just x) = x
+retreive_lookup Nothing = S.empty
+
 nterm :: (Parseable t, Ord t) => Nt -> Parse_Choice t -> Parse_Symb t
 nterm n p = (Nt n, parser)
   where parser inp g l k c vs fs = (rs' , gres)
-            where gres = if S.member n vs
-                         then S.fromList [eps]
-                         else snd $ p inp n k cont_for (S.insert n vs) fs
+            where gres = if M.member n vs -- If non-terminal already checked
+                         then retreive_lookup (M.lookup n vs) -- Return its Firstset
+                         else snd $ p inp n k cont_for (M.insert n S.empty vs) fs -- Else continue
                   rs' s | null rs   = fst (p inp n k cont_for vs fs) s'
                         | otherwise = compAll [ applyCF c (removePrefix len inp) (g,l,r)
                                             | r <- rs, let len = r - k ] s'
@@ -72,7 +77,7 @@ term :: Parseable t => t -> Parse_Symb t
 term t = (Term t, snd (predicate (pack (show t)) (matches t) t))
 
 seqStart :: (Parseable t, Ord t) => Parse_Seq t
-seqStart inp x beta l c _ fs = (continue inp (Slot x [] beta, l, l, l) c, fs)
+seqStart inp x beta l c _ fs = (continue inp (Slot x [] beta, l, l, l) c, fs) -- Add the incoming followset as firstset
 
 seqOp :: Ord t => Parse_Seq t -> Parse_Symb t -> Parse_Seq t
 seqOp left right = parser
@@ -80,8 +85,8 @@ seqOp left right = parser
                 (s, q) = right
                 parser inp x beta l c0 vs fs = (command_p, first_p)
                     where
-                    (command_q, first_q) = q inp (Slot x [] beta) l l c0 vs fs
-                    (command_p, first_p) = p inp x (s:beta) l c1 vs first_q
+                    (command_q, first_q) = q inp (Slot x [] beta) l l c0 vs fs -- Get Firstset from non-terminal
+                    (command_p, first_p) = p inp x (s:beta) l c1 vs first_q -- Continue and return this firstset as followset for next symbol
                         where c1 = ContF c1f
                                 where c1f inp ((Slot _ alpha _),l,k) = fst $ q inp (Slot x (alpha++[s]) beta) l k c2 vs fs
                                         where c2 = ContF c2f
@@ -98,15 +103,18 @@ continue inp bsr@(g@(Slot x alpha beta),l,k,r) c s
 
 altStart :: Parse_Choice t
 altStart = parser
-            where  parser inp n l c _ _ = (id, S.empty)
+            where  parser inp n l c _ _ = (id, S.empty) -- Start empty alternate
 
+-- Retrieve the character from the input we want to match.
 nextchar :: Input t -> Int -> t
 nextchar inp l = arr A.! l
                 where   (arr, _) = inp
 
+-- Firstset check, if epsilon its always true (backup).
 isinfirst :: (Parseable t, Ord t) => t -> Firstset t -> Bool
 isinfirst symbol first = S.member eps first || S.member True (boolset symbol first)
 
+-- Matches a character with each symbol in the firstset.
 boolset :: (Parseable t) => t -> Firstset t -> S.Set Bool
 boolset symbol fs = S.map (matches symbol) fs
 
@@ -117,15 +125,12 @@ altOp left right = parser
     q = right
     parser inp n l c vs fs = (command, newfirst)
         where
-            (command_p, first_p) = p inp n l c vs fs
-            (command_q, first_q) = q inp n [] l c vs fs
-            newfirst = S.union first_p first_q
-            -- command = traceShow (nextchar inp l, first_q, isinfirst (nextchar inp l) first_q) (if isinfirst (nextchar inp l) first_q
-            --             then command_p . command_q
-            --             else command_p)
-            command = if isinfirst (nextchar inp l) first_q
-                        then command_p . command_q
-                        else command_p
+            (command_p, first_p) = p inp n l c vs fs -- Get firstset from alternative
+            (command_q, first_q) = q inp n [] l c vs fs -- Get firstset from sequence.
+            newfirst = S.union first_p first_q -- Combine firstset for the alternatives
+            command = if isinfirst (nextchar inp l) first_q -- If the next character is in the firstset
+                        then command_p . command_q -- Then its a valid production
+                        else command_p -- Otherwise dont add it.
 
 {- MUCH SLOWER ?
 altOp p q inp n l c s =
