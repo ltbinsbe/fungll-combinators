@@ -1,7 +1,4 @@
-
 module GLL.Combinators.Visit.FUNGLL where
-
-import Debug.Trace -- DEBUGGING
 
 import GLL.Types.Grammar
 import GLL.Types.BSR
@@ -19,12 +16,11 @@ type Command t  = State t (ContF t) -> State t (ContF t)
 data ContF t    = ContF (Input t -> Descr t -> Command t)
 
 type Firstset t = S.Set t
--- type Visited = S.Set Nt
-type Visited t = M.Map Nt (Firstset t)
+type Visited = S.Set Nt
 
-type Parse_Symb t   = (Symbol t, Input t -> Slot t -> Int -> Int -> ContF t -> Visited t -> Firstset t -> (Command t, Firstset t))
-type Parse_Choice t = Input t -> Nt -> Int -> ContF t -> Visited t -> Firstset t -> (Command t, Firstset t)
-type Parse_Seq t    = Input t -> Nt -> [Symbol t] -> Int -> ContF t -> Visited t -> Firstset t -> (Command t, Firstset t)
+type Parse_Symb t   = (Symbol t, Input t -> Slot t -> Int -> Int -> ContF t -> Visited -> Firstset t -> (Command t, Firstset t))
+type Parse_Choice t = Input t -> Nt -> Int -> ContF t -> Visited -> Firstset t -> (Command t, Firstset t)
+type Parse_Seq t    = Input t -> Nt -> [Symbol t] -> Int -> ContF t -> Visited -> Firstset t -> (Command t, Firstset t)
 type Parse_Alt t    = Parse_Seq t
 
 parser_for :: (Parseable t) => Nt -> Parse_Symb t -> Input t -> ParseResult t
@@ -32,7 +28,7 @@ parser_for x p inp = resultFromState inp (run_parse x p inp 0 emptyState)
 
 run_parse :: (Parseable t, Ord t) => Nt -> Parse_Symb t -> Input t -> Int ->
                                 State t (ContF t) -> State t (ContF t)
-run_parse x p@(y,pf) inp l = fst $ pf inp (Slot x [y] []) l l counter_cont M.empty (S.fromList [eps])
+run_parse x p@(y,pf) inp l = fst $ pf inp (Slot x [y] []) l l counter_cont S.empty (S.fromList [eps])
 
 counter_cont :: ContF t
 counter_cont = ContF cf
@@ -51,16 +47,12 @@ parse_apply = seqOp seqStart
 parse_seq :: Ord t => Parse_Seq t -> Parse_Symb t -> Parse_Seq t
 parse_seq = seqOp
 
-retreive_lookup :: Maybe (Firstset t) -> Firstset t
-retreive_lookup (Just x) = x
-retreive_lookup Nothing = S.empty
-
 nterm :: (Parseable t, Ord t) => Nt -> Parse_Choice t -> Parse_Symb t
 nterm n p = (Nt n, parser)
-  where parser inp g l k c vs fs = (rs' , gres)
-            where gres = if M.member n vs -- If non-terminal already checked
-                         then retreive_lookup (M.lookup n vs) -- Return its Firstset
-                         else snd $ p inp n k cont_for (M.insert n S.empty vs) fs -- Else continue
+  where parser inp g l k c vs fs = (rs' , first)
+            where first = if S.member n vs -- If non-terminal already checked
+                         then S.empty -- Return an empty set as it does not contribute
+                         else snd $ p inp n k cont_for (S.insert n vs) fs -- Else continue
                   rs' s | null rs   = fst (p inp n k cont_for vs fs) s'
                         | otherwise = compAll [ applyCF c (removePrefix len inp) (g,l,r)
                                             | r <- rs, let len = r - k ] s'
@@ -81,14 +73,14 @@ seqStart inp x beta l c _ fs = (continue inp (Slot x [] beta, l, l, l) c, fs) --
 
 seqOp :: Ord t => Parse_Seq t -> Parse_Symb t -> Parse_Seq t
 seqOp left right = parser
-        where   p = left
-                (s, q) = right
-                parser inp x beta l c0 vs fs = (command_p, first_p)
+        where   seq = left
+                (s, symb) = right
+                parser inp x beta l c0 vs fs = (command_seq, first_seq)
                     where
-                    (command_q, first_q) = q inp (Slot x [] beta) l l c0 vs fs -- Get Firstset from non-terminal
-                    (command_p, first_p) = p inp x (s:beta) l c1 vs first_q -- Continue and return this firstset as followset for next symbol
+                    (command_symb, first_symb) = symb inp (Slot x [] beta) l l c0 vs fs -- Get Firstset from non-terminal
+                    (command_seq, first_seq) = seq inp x (s:beta) l c1 vs first_symb -- Continue and return this firstset as followset for previous symbol
                         where c1 = ContF c1f
-                                where c1f inp ((Slot _ alpha _),l,k) = fst $ q inp (Slot x (alpha++[s]) beta) l k c2 vs fs
+                                where c1f inp ((Slot _ alpha _),l,k) = fst $ symb inp (Slot x (alpha++[s]) beta) l k c2 vs fs
                                         where c2 = ContF c2f
                                                 where c2f inp (g,l,r) = continue inp (g,l,k,r) c0
 
@@ -121,70 +113,21 @@ boolset symbol fs = S.map (matches symbol) fs
 altOp :: (Parseable t, Ord t) => Parse_Choice t -> Parse_Seq t -> Parse_Choice t
 altOp left right = parser
   where
-    p = left
-    q = right
-    parser inp n l c vs fs = (command, newfirst)
+    alt = left
+    seq = right
+    parser inp n l c vs fs = (new_command, new_first)
         where
-            (command_p, first_p) = p inp n l c vs fs -- Get firstset from alternative
-            (command_q, first_q) = q inp n [] l c vs fs -- Get firstset from sequence.
-            newfirst = S.union first_p first_q -- Combine firstset for the alternatives
-            command = if isinfirst (nextchar inp l) first_q -- If the next character is in the firstset
-                        then command_p . command_q -- Then its a valid production
-                        else command_p -- Otherwise dont add it.
-
-{- MUCH SLOWER ?
-altOp p q inp n l c s =
-  let s1 = p inp n l counter_cont s
-      s2 = q inp n [] l counter_cont s1
-  in compAll [ applyCF c (error "cont_for assert", l, r)
-             | r <- IS.toList (IS.union (IM.keysSet (successes s1))
-                                        (IM.keysSet (successes s2))) ] s2
--}
+            (command_alt, first_alt) = alt inp n l c vs fs -- Get firstset from alternative
+            (command_seq, first_seq) = seq inp n [] l c vs fs -- Get firstset from sequence.
+            new_first = S.union first_alt first_seq -- Combine firstset for the alternatives
+            new_command = if isinfirst (nextchar inp l) first_seq -- If the next character is in the firstset
+                        then command_alt . command_seq -- Then its a valid production
+                        else command_alt -- Otherwise dont add it.
 
 compAll :: [Command t] -> Command t
 compAll = foldr (.) id
 
 applyCF (ContF cf) inp a = cf inp a
-
-{- EXTENSIONS -}
-
--- parse_lexical :: Nt -> RawParser t -> Parse_Symb t
--- parse_lexical n scanner = (Nt n, parser)
---   where parser inp g l k c s =
---           compAll [ applyCF c (removePrefix len inp) (g, l, k + len)
---                   | prefix <- apply_scanner scanner inp
---                   , let len = length prefix ] s
-
-{- EXPERIMENTAL -}
-
--- andNot :: (Show t) => Parse_Symb t -> Parse_Symb t -> Parse_Symb t
--- andNot (lnt,p) (rnt,q) = (Nt lhs_symb,parser)
---   where lhs_symb = pack ("__andNot(" ++ show lnt ++","++ show rnt ++ ")")
---         parser inp g l k c s = compAll [ applyCF c (removePrefix len inp) (g, l, r)
---                                        | r <- rs, let len = r - k ]
---                                        s2{successes = successes s}
---           where s1 = run_parse lhs_symb (lnt,p) inp k s{successes = IM.empty}
---                 s2 = run_parse lhs_symb (rnt,q) inp k s1{successes = IM.empty}
---                 rs = IS.toList $ IS.difference (IM.keysSet (successes s1))
---                                                (IM.keysSet (successes s2))
-
-
--- ands :: (Show t) => [Parse_Symb t] -> Parse_Symb t
--- ands = foldr andOp andStart
-
--- andOp :: (Show t) => Parse_Symb t -> Parse_Symb t -> Parse_Symb t
--- andOp (lnt,p) (rnt,q) = (Nt lhs_symb,parser)
---   where lhs_symb = pack ("__and(" ++ show lnt ++","++ show rnt ++ ")")
---         parser inp g l k c s = compAll [ applyCF c (removePrefix len inp) (g, l, r)
---                                        | r <- rs, let len = r - k ] s2
---           where s1 = run_parse lhs_symb (lnt,p) inp k s
---                 s2 = run_parse lhs_symb (rnt,q) inp k s1
---                 rs = IS.toList $ IS.intersection (IM.keysSet (successes s1))
---                                                  (IM.keysSet (successes s2))
-
--- andStart :: Parse_Symb t
--- andStart = (Nt (pack "__and_unit"), parser)
---   where parser inp g l k c s = applyCF c inp (g, l, k) s
 
 predicate :: Parseable t => Nt -> (t -> Bool) -> t -> Parse_Symb t
 predicate nt p t = (Nt nt, parser)
