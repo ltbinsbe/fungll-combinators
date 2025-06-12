@@ -3,7 +3,7 @@ module Main where
 
 import Control.Monad
 import qualified GLL.Combinators.MemInterface as Mem
-import GLL.Combinators.Interface
+import GLL.ParserCombinators
 
 -- | Datatype representing arithmetic expressions
 data Expr   = Add Expr Expr
