@@ -33,7 +33,7 @@ import Data.Char (ord)
 import Data.List (sort, nub)
 import Data.IORef
 
-import GLL.Combinators.Interface
+import GLL.ParserCombinators
 import GLL.Parseable.Char ()
 
 -- | Defines and executes multiple1 unit-tests 
